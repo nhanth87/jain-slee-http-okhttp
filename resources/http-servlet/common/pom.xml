@@ -44,13 +44,13 @@
 							<goal>run</goal>
 						</goals>
 						<configuration>
-							<tasks>
+							<target>
 								<copy todir="target" flatten="true">
 									<fileset dir=".">
 										<include name="src/main/module/module.xml"/>
 									</fileset>
 								</copy>
-							</tasks>
+							</target>
 						</configuration>
 					</execution>
 				</executions>
@@ -74,7 +74,7 @@
 									<goal>run</goal>
 								</goals>
 								<configuration>
-									<tasks>
+									<target>
 										<copy overwrite="true" verbose="true"
 											  file="target/${project.build.finalName}.jar"
 											  toDir="${jboss.home}/modules/system/layers/base/${module.path}/main" />
@@ -94,7 +94,7 @@
 		<module name="org.restcomm.slee.resource.http.common" export="true"/>
 	</dependencies>]]></replacevalue>
 										</replace>
-									</tasks>
+									</target>
 								</configuration>
 							</execution>
 							<execution>
@@ -104,14 +104,14 @@
 									<goal>run</goal>
 								</goals>
 								<configuration>
-									<tasks>
+									<target>
 										<delete dir="${jboss.home}/modules/system/layers/base/${module.path}" />
 
 										<replace file="${jboss.home}/modules/system/layers/base/${slee.lib.path}/main/module.xml">
 											<replacetoken><![CDATA[<module name="org.restcomm.slee.resource.http.common" export="true"/>]]></replacetoken>
 											<replacevalue><![CDATA[]]></replacevalue>
 										</replace>
-									</tasks>
+									</target>
 								</configuration>
 							</execution>
 						</executions>

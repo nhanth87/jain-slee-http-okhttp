@@ -43,9 +43,9 @@
 							<goal>run</goal>
 						</goals>
 						<configuration>
-							<tasks>
+							<target>
 								<copy overwrite="true" file="target/${project.build.finalName}.jar" todir="${jboss.home}/standalone/deployments" />
-							</tasks>
+							</target>
 						</configuration>
 					</execution>
 					<execution>
@@ -55,9 +55,9 @@
 							<goal>run</goal>
 						</goals>
 						<configuration>
-							<tasks>
+							<target>
 								<delete file="${jboss.home}/standalone/deployments/${project.build.finalName}.jar" />
-							</tasks>
+							</target>
 						</configuration>
 					</execution>
 				</executions>

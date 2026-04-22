@@ -26,7 +26,7 @@
 									<goal>run</goal>
 								</goals>
 								<configuration>
-									<tasks>
+									<target>
 										<copy overwrite="true" todir="${release.dir}/resources/http-client">
 											<fileset dir="${basedir}/../du/target">
 												<include name="**.jar" />
@@ -40,7 +40,7 @@
 												<filter token="JBOSS.PATH" value="${jboss.path}" />
 											</filterset>
 										</copy>
-									</tasks>
+									</target>
 								</configuration>
 							</execution>
 						</executions>

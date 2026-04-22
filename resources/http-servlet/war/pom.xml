@@ -32,9 +32,9 @@
                             <goal>run</goal>
                         </goals>
                         <configuration>
-                            <tasks>
+                            <target>
                                 <copy overwrite="true" verbose="true" file="target/${project.build.finalName}.war" toDir="${jboss.home}/server/${node}/deploy" />
-                            </tasks>
+                            </target>
                         </configuration>
                     </execution>
                     <execution>
@@ -44,9 +44,9 @@
                             <goal>run</goal>
                         </goals>
                         <configuration>
-                            <tasks>
+                            <target>
                                 <delete file="${jboss.home}/server/${node}/deploy/${project.build.finalName}.war" />
-                            </tasks>
+                            </target>
                         </configuration>
                     </execution>
                 </executions>

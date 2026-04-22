@@ -32,6 +32,11 @@
             <artifactId>http-servlet-ra</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>http-servlet-common</artifactId>
+            <version>${project.version}</version>
+        </dependency>
     </dependencies>
 
     <build>
@@ -47,6 +52,9 @@
                 <groupId>org.mobicents.tools</groupId>
                 <artifactId>maven-du-plugin</artifactId>
                 <version>${maven.du.plugin.version}</version>
+                <configuration>
+                    <excludeTransitive>false</excludeTransitive>
+                </configuration>
                 <executions>
                     <execution>
                         <goals>
@@ -67,9 +75,9 @@
                             <goal>run</goal>
                         </goals>
                         <configuration>
-                            <tasks>
+                            <target>
                                 <copy overwrite="true" file="target/${project.build.finalName}.jar" todir="${jboss.home}/standalone/deployments" />
-                            </tasks>
+                            </target>
                         </configuration>
                     </execution>
                     <execution>
@@ -79,9 +87,9 @@
                             <goal>run</goal>
                         </goals>
                         <configuration>
-                            <tasks>
+                            <target>
                                 <delete file="${jboss.home}/standalone/deployments/${project.build.finalName}.jar" />
-                            </tasks>
+                            </target>
                         </configuration>
                     </execution>
                 </executions>
