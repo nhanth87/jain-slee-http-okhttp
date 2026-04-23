@@ -19,11 +19,23 @@
 			<groupId>${project.groupId}</groupId>
 			<artifactId>slee-ra-http-client-nio-events</artifactId>
 			<version>${project.version}</version>
+			<exclusions>
+				<exclusion>
+					<groupId>javax.slee</groupId>
+					<artifactId>jain-slee</artifactId>
+				</exclusion>
+			</exclusions>
 		</dependency>
 		<dependency>
 			<groupId>${project.groupId}</groupId>
 			<artifactId>slee-ra-http-client-nio-ratype</artifactId>
 			<version>${project.version}</version>
+			<exclusions>
+				<exclusion>
+					<groupId>javax.slee</groupId>
+					<artifactId>jain-slee</artifactId>
+				</exclusion>
+			</exclusions>
 		</dependency>
 		<dependency>
 			<groupId>${project.groupId}</groupId>

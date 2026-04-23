@@ -25,6 +25,12 @@
 			<groupId>org.mobicents.resources</groupId>
 			<artifactId>http-client-ratype</artifactId>
 			<version>${pom.version}</version>
+			<exclusions>
+				<exclusion>
+					<groupId>javax.slee</groupId>
+					<artifactId>jain-slee</artifactId>
+				</exclusion>
+			</exclusions>
 		</dependency>
 		<dependency>
 			<groupId>org.mobicents.resources</groupId>
