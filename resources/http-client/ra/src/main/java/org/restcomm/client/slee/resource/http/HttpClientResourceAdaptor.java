@@ -202,7 +202,17 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
      */
     public void raActive() {
         activities = new ConcurrentHashMap<HttpClientActivityHandle, HttpClientActivity>();
-        executorService = Executors.newCachedThreadPool();
+        // JENNY-OPT: Fixed thread pool instead of cached to avoid unlimited thread creation
+        // For 5000 TPS with ~200ms RTT, need ~1000 concurrent threads max
+        // Using 256 threads + connection pool tuning for optimal throughput
+        executorService = Executors.newFixedThreadPool(256, new java.util.concurrent.ThreadFactory() {
+            private int count = 0;
+            public Thread newThread(Runnable r) {
+                Thread t = new Thread(r, "HttpClient-Worker-" + (++count));
+                t.setDaemon(true);
+                return t;
+            }
+        });
         if (httpClientFactory != null) {
             httpclient = httpClientFactory.newHttpClient();
         } else {
