@@ -4,9 +4,16 @@
 		resource-adaptor-id="ResourceAdaptorID[name=HttpClientResourceAdaptor,vendor=org.restcomm,version=4.0]"
 		entity-name="HttpClientResourceAdaptor">
 		<properties>
-			<property name="MAX_CONNECTIONS_FOR_ROUTES" type="java.lang.String" value="http:localhost:8080:500" />
-			<property name="MAX_CONNECTIONS_TOTAL" type="java.lang.Integer" value="1000" />
-            		<property name="DEFAULT_MAX_FOR_ROUTE" type="java.lang.Integer" value="4" />
+			<property name="HTTP_CLIENT_FACTORY" type="java.lang.String"
+				value="org.restcomm.client.slee.resource.http.AdaptiveOkHttpClientFactory" />
+			<property name="MAX_CONNECTIONS_TOTAL" type="java.lang.Integer" value="3000" />
+			<property name="MIN_PER_HOST" type="java.lang.Integer" value="32" />
+			<property name="MAX_PER_HOST" type="java.lang.Integer" value="512" />
+			<property name="ACQUIRE_TIMEOUT_MS" type="java.lang.Integer" value="500" />
+			<property name="REBALANCE_INTERVAL_MS" type="java.lang.Integer" value="5000" />
+			<property name="HEALTH_HTTP_ENABLED" type="java.lang.Boolean" value="true" />
+			<property name="DEFAULT_MAX_FOR_ROUTE" type="java.lang.Integer" value="4" />
+			<property name="MAX_CONNECTIONS_FOR_ROUTES" type="java.lang.String" value="" />
         </properties>
 		<ra-link name="HttpClientResourceAdaptor" />
 	</ra-entity>

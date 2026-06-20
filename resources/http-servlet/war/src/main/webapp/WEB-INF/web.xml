@@ -25,5 +25,14 @@
 	<servlet-mapping>
 		<servlet-name>${servlet-name}</servlet-name>
 		<url-pattern>/*</url-pattern>
-	</servlet-mapping>	
+	</servlet-mapping>
+	<servlet>
+		<servlet-name>HttpClientPoolHealth</servlet-name>
+		<servlet-class>org.restcomm.client.slee.resource.http.HttpClientPoolHealthServlet</servlet-class>
+		<load-on-startup>2</load-on-startup>
+	</servlet>
+	<servlet-mapping>
+		<servlet-name>HttpClientPoolHealth</servlet-name>
+		<url-pattern>/restcomm/health/http-client</url-pattern>
+	</servlet-mapping>
 </web-app>

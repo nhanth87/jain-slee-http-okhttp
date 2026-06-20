@@ -37,7 +37,37 @@
 			<description>May be used to provide a class which is responsible for building the HTTP Client. If used the other properties are irrelevant.</description>
 			<config-property-name>HTTP_CLIENT_FACTORY</config-property-name>
 			<config-property-type>java.lang.String</config-property-type>
-			<config-property-value></config-property-value>
+			<config-property-value>org.restcomm.client.slee.resource.http.AdaptiveOkHttpClientFactory</config-property-value>
+		</config-property>
+		<config-property>
+			<description>Minimum concurrent slots per discovered host for adaptive fair-share pool.</description>
+			<config-property-name>MIN_PER_HOST</config-property-name>
+			<config-property-type>java.lang.Integer</config-property-type>
+			<config-property-value>32</config-property-value>
+		</config-property>
+		<config-property>
+			<description>Maximum concurrent slots per discovered host for adaptive fair-share pool.</description>
+			<config-property-name>MAX_PER_HOST</config-property-name>
+			<config-property-type>java.lang.Integer</config-property-type>
+			<config-property-value>512</config-property-value>
+		</config-property>
+		<config-property>
+			<description>Max wait in milliseconds to acquire a host slot before failing the request.</description>
+			<config-property-name>ACQUIRE_TIMEOUT_MS</config-property-name>
+			<config-property-type>java.lang.Integer</config-property-type>
+			<config-property-value>500</config-property-value>
+		</config-property>
+		<config-property>
+			<description>Adaptive rebalance interval in milliseconds.</description>
+			<config-property-name>REBALANCE_INTERVAL_MS</config-property-name>
+			<config-property-type>java.lang.Integer</config-property-type>
+			<config-property-value>5000</config-property-value>
+		</config-property>
+		<config-property>
+			<description>Enable HTTP health endpoint registration via HttpClientPoolHealthServlet.</description>
+			<config-property-name>HEALTH_HTTP_ENABLED</config-property-name>
+			<config-property-type>java.lang.Boolean</config-property-type>
+			<config-property-value>true</config-property-value>
 		</config-property>
 		<config-property>
 			<description>Configures the default value for client to override default limit of max concurrent connections for route, it must be overrided by MAX_CONNECTIONS_FOR_ROUTES</description>

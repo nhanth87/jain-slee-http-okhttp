@@ -143,12 +143,8 @@ public class OkHttpHttpClient implements HttpClient {
             
             @Override
             public void onResponse(Call call, Response response) throws IOException {
-                try {
-                    HttpResponse httpResponse = convertResponse(response);
-                    callback.onResponse(httpResponse);
-                } finally {
-                    response.close();
-                }
+                HttpResponse httpResponse = convertResponse(response);
+                callback.onResponse(httpResponse);
             }
         });
     }

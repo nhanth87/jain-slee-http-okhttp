@@ -32,6 +32,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
+import javax.management.MBeanServer;
+import javax.management.ObjectName;
 import javax.slee.Address;
 import javax.slee.EventTypeID;
 import javax.slee.facilities.Tracer;
@@ -74,6 +76,8 @@ import org.apache.http.protocol.HTTP;
 import org.apache.http.protocol.HttpContext;
 import org.apache.http.util.EntityUtils;
 
+import java.lang.management.ManagementFactory;
+
 /**
  * 
  * @author amit bhayani
@@ -87,6 +91,11 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
     private static final String CFG_PROPERTY_MAX_CONNECTIONS_FOR_ROUTES = "MAX_CONNECTIONS_FOR_ROUTES";
     private static final String CFG_PROPERTY_MAX_CONNECTIONS_TOTAL = "MAX_CONNECTIONS_TOTAL";
     private static final String CFG_PROPERTY_DEFAULT_MAX_FOR_ROUTE = "DEFAULT_MAX_FOR_ROUTE";
+    private static final String CFG_PROPERTY_MIN_PER_HOST = "MIN_PER_HOST";
+    private static final String CFG_PROPERTY_MAX_PER_HOST = "MAX_PER_HOST";
+    private static final String CFG_PROPERTY_ACQUIRE_TIMEOUT_MS = "ACQUIRE_TIMEOUT_MS";
+    private static final String CFG_PROPERTY_REBALANCE_INTERVAL_MS = "REBALANCE_INTERVAL_MS";
+    private static final String CFG_PROPERTY_HEALTH_HTTP_ENABLED = "HEALTH_HTTP_ENABLED";
 
     private static final int HTTP_SCHEME_INDEX = 0;
     private static final int HTTP_HOST_INDEX = 1;
@@ -111,6 +120,10 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
     private int defaultMaxForRoute;
     private Map<HttpRoute, Integer> maxForRoutes;
     private HttpClientFactory httpClientFactory;
+    private String httpClientFactoryClassName = "";
+    private boolean adaptiveFactoryEnabled;
+    private AdaptiveHostLimiter adaptiveHostLimiter;
+    private ObjectName poolHealthMBeanName;
 
     private IdleConnectionMonitorThread idleConnectionMonitorThread = null;
 
@@ -144,8 +157,33 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
      */
     @SuppressWarnings("unchecked")
     public void raConfigure(ConfigProperties properties) {
-        String httpClientFactoryClassName = (String) properties.getProperty(CFG_PROPERTY_HTTP_CLIENT_FACTORY)
-                .getValue();
+        httpClientFactoryClassName = (String) properties.getProperty(CFG_PROPERTY_HTTP_CLIENT_FACTORY).getValue();
+        adaptiveFactoryEnabled = AdaptiveHttpClientConfig.isAdaptiveFactory(httpClientFactoryClassName);
+
+        if (adaptiveFactoryEnabled) {
+            AdaptiveHttpClientConfig config = new AdaptiveHttpClientConfig();
+            config.setMaxTotal(readIntProperty(properties, CFG_PROPERTY_MAX_CONNECTIONS_TOTAL,
+                    AdaptiveHttpClientConfig.DEFAULT_MAX_TOTAL));
+            config.setMinPerHost(readIntProperty(properties, CFG_PROPERTY_MIN_PER_HOST,
+                    AdaptiveHttpClientConfig.DEFAULT_MIN_PER_HOST));
+            config.setMaxPerHost(readIntProperty(properties, CFG_PROPERTY_MAX_PER_HOST,
+                    AdaptiveHttpClientConfig.DEFAULT_MAX_PER_HOST));
+            config.setAcquireTimeoutMs(readIntProperty(properties, CFG_PROPERTY_ACQUIRE_TIMEOUT_MS,
+                    AdaptiveHttpClientConfig.DEFAULT_ACQUIRE_TIMEOUT_MS));
+            config.setRebalanceIntervalMs(readIntProperty(properties, CFG_PROPERTY_REBALANCE_INTERVAL_MS,
+                    AdaptiveHttpClientConfig.DEFAULT_REBALANCE_INTERVAL_MS));
+            config.setHealthHttpEnabled(readBooleanProperty(properties, CFG_PROPERTY_HEALTH_HTTP_ENABLED,
+                    AdaptiveHttpClientConfig.DEFAULT_HEALTH_HTTP_ENABLED));
+            AdaptiveHttpClientConfig.set(config);
+            try {
+                httpClientFactory = ((Class<? extends HttpClientFactory>) Class.forName(httpClientFactoryClassName))
+                        .newInstance();
+            } catch (Exception e) {
+                tracer.severe("failed to load adaptive http client factory class", e);
+            }
+            return;
+        }
+
         if (httpClientFactoryClassName.isEmpty()) {
             maxTotal = (Integer) properties.getProperty(CFG_PROPERTY_MAX_CONNECTIONS_TOTAL).getValue();
 
@@ -195,6 +233,36 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
         }
     }
 
+    private static int readIntProperty(ConfigProperties properties, String name, int defaultValue) {
+        try {
+            Object value = properties.getProperty(name).getValue();
+            if (value instanceof Integer) {
+                return (Integer) value;
+            }
+            if (value instanceof String) {
+                return Integer.parseInt((String) value);
+            }
+        } catch (Exception ignored) {
+            // use default
+        }
+        return defaultValue;
+    }
+
+    private static boolean readBooleanProperty(ConfigProperties properties, String name, boolean defaultValue) {
+        try {
+            Object value = properties.getProperty(name).getValue();
+            if (value instanceof Boolean) {
+                return (Boolean) value;
+            }
+            if (value instanceof String) {
+                return Boolean.parseBoolean((String) value);
+            }
+        } catch (Exception ignored) {
+            // use default
+        }
+        return defaultValue;
+    }
+
     /*
      * (non-Javadoc)
      * 
@@ -202,10 +270,8 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
      */
     public void raActive() {
         activities = new ConcurrentHashMap<HttpClientActivityHandle, HttpClientActivity>();
-        // JENNY-OPT: Fixed thread pool instead of cached to avoid unlimited thread creation
-        // For 5000 TPS with ~200ms RTT, need ~1000 concurrent threads max
-        // Using 256 threads + connection pool tuning for optimal throughput
-        executorService = Executors.newFixedThreadPool(256, new java.util.concurrent.ThreadFactory() {
+        // Async OkHttp callbacks only need a small dispatch pool at 10K TPS.
+        executorService = Executors.newFixedThreadPool(128, new java.util.concurrent.ThreadFactory() {
             private int count = 0;
             public Thread newThread(Runnable r) {
                 Thread t = new Thread(r, "HttpClient-Worker-" + (++count));
@@ -215,6 +281,12 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
         });
         if (httpClientFactory != null) {
             httpclient = httpClientFactory.newHttpClient();
+            if (adaptiveFactoryEnabled) {
+                adaptiveHostLimiter = new AdaptiveHostLimiter(AdaptiveHttpClientConfig.get());
+                adaptiveHostLimiter.start();
+                HttpClientHealthRegistry.register(adaptiveHostLimiter);
+                registerPoolHealthMBean();
+            }
         } else {
             HttpParams params = new SyncBasicHttpParams();
             SchemeRegistry schemeRegistry = new SchemeRegistry();
@@ -278,6 +350,11 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
         if (this.idleConnectionMonitorThread != null) {
             this.idleConnectionMonitorThread.shutdown();
         }
+        unregisterPoolHealthMBean();
+        if (adaptiveHostLimiter != null) {
+            adaptiveHostLimiter.stop();
+            adaptiveHostLimiter = null;
+        }
     }
 
     /*
@@ -292,7 +369,9 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
         executorService.shutdown();
         executorService = null;
 
-        this.httpclient.getConnectionManager().shutdown();
+        if (this.httpclient != null && this.httpclient.getConnectionManager() != null) {
+            this.httpclient.getConnectionManager().shutdown();
+        }
         this.idleConnectionMonitorThread = null;
 
         this.httpclient = null;
@@ -693,6 +772,39 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
         }
     }
 
+    private void registerPoolHealthMBean() {
+        if (adaptiveHostLimiter == null) {
+            return;
+        }
+        try {
+            MBeanServer server = ManagementFactory.getPlatformMBeanServer();
+            String entityName = resourceAdaptorContext.getEntityName();
+            poolHealthMBeanName = new ObjectName("org.restcomm.slee.http:entity=" + ObjectName.quote(entityName)
+                    + ",type=PoolHealth");
+            if (!server.isRegistered(poolHealthMBeanName)) {
+                server.registerMBean(new HttpClientPoolHealth(adaptiveHostLimiter), poolHealthMBeanName);
+            }
+        } catch (Exception e) {
+            tracer.warning("Failed to register HTTP client pool health MBean", e);
+        }
+    }
+
+    private void unregisterPoolHealthMBean() {
+        if (poolHealthMBeanName == null) {
+            return;
+        }
+        try {
+            MBeanServer server = ManagementFactory.getPlatformMBeanServer();
+            if (server.isRegistered(poolHealthMBeanName)) {
+                server.unregisterMBean(poolHealthMBeanName);
+            }
+        } catch (Exception e) {
+            tracer.warning("Failed to unregister HTTP client pool health MBean", e);
+        } finally {
+            poolHealthMBeanName = null;
+        }
+    }
+
     protected class AsyncExecuteMethodHandler implements Runnable {
 
         private final HttpRequest httpRequest;
@@ -720,74 +832,126 @@ public class HttpClientResourceAdaptor implements ResourceAdaptor {
                 tracer.fine("Executing Request " + httpRequest);
             }
 
+            String hostKey = null;
+            long startNanos = System.nanoTime();
+            if (adaptiveHostLimiter != null && httpRequest instanceof HttpUriRequest) {
+                hostKey = AdaptiveHostLimiter.hostKeyFromRequest((HttpUriRequest) httpRequest);
+                try {
+                    if (!adaptiveHostLimiter.tryAcquire(hostKey)) {
+                        IOException timeout = new IOException("Adaptive host slot acquire timeout for " + hostKey);
+                        deliverResponseEvent(new ResponseEvent(timeout, requestApplicationData), null);
+                        return;
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    deliverResponseEvent(new ResponseEvent(new IOException("Interrupted acquiring host slot", e),
+                            requestApplicationData), null);
+                    return;
+                }
+            }
+
+            if (httpclient instanceof OkHttpHttpClient && httpRequest instanceof HttpUriRequest) {
+                executeAsyncOkHttp((HttpUriRequest) httpRequest, hostKey, startNanos);
+                return;
+            }
+
+            executeBlocking(hostKey, startNanos);
+        }
+
+        private void executeAsyncOkHttp(HttpUriRequest uriRequest, final String hostKey, final long startNanos) {
+            OkHttpHttpClient okClient = (OkHttpHttpClient) httpclient;
+            okClient.executeAsync(uriRequest, httpContext, new OkHttpHttpClient.ApacheHttpResponseCallback() {
+                @Override
+                public void onResponse(HttpResponse response) {
+                    long rttMs = (System.nanoTime() - startNanos) / 1_000_000L;
+                    if (hostKey != null) {
+                        adaptiveHostLimiter.recordSuccess(hostKey, rttMs);
+                        adaptiveHostLimiter.release(hostKey);
+                    }
+                    ((HttpClientActivityImpl) activity).addResponse(response);
+                    deliverResponseEvent(new ResponseEvent(response, requestApplicationData), null);
+                }
+
+                @Override
+                public void onFailure(IOException e) {
+                    if (hostKey != null) {
+                        adaptiveHostLimiter.recordFailure(hostKey);
+                        adaptiveHostLimiter.release(hostKey);
+                    }
+                    deliverResponseEvent(new ResponseEvent(e, requestApplicationData), null);
+                }
+            });
+        }
+
+        private void executeBlocking(String hostKey, long startNanos) {
             ResponseEvent event = null;
             HttpResponse response = null;
             try {
-
                 if (this.httpHost != null) {
                     response = httpclient.execute(this.httpHost, this.httpRequest, this.httpContext);
                 } else if (this.httpContext != null) {
                     response = httpclient.execute((HttpUriRequest) this.httpRequest, this.httpContext);
                 }
-
-                //track response inactivity for later closing
-                ((HttpClientActivityImpl)activity).addResponse(response);
-                        
-                if (tracer.isFineEnabled()) {
-                    tracer.fine("Executed Request " + httpRequest);
+                if (hostKey != null) {
+                    long rttMs = (System.nanoTime() - startNanos) / 1_000_000L;
+                    adaptiveHostLimiter.recordSuccess(hostKey, rttMs);
                 }
-
-                // create event with response
+                ((HttpClientActivityImpl) activity).addResponse(response);
                 event = new ResponseEvent(response, requestApplicationData);
             } catch (IOException e) {
+                if (hostKey != null) {
+                    adaptiveHostLimiter.recordFailure(hostKey);
+                }
                 tracer.severe("executeMethod failed in AsyncExecuteHttpMethodHandler with IOException", e);
                 event = new ResponseEvent(e, requestApplicationData);
-
             } catch (Exception e) {
+                if (hostKey != null) {
+                    adaptiveHostLimiter.recordFailure(hostKey);
+                }
                 tracer.severe("executeMethod failed in AsyncExecuteHttpMethodHandler with Exception", e);
                 event = new ResponseEvent(e, requestApplicationData);
-            }
-
-            // process event
-            try {
-                processResponseEvent(event, this.activity);
-            } catch (ActivityIsEndingException e) {
-                this.activity.endActivity();
-                ((HttpClientActivityImpl) this.activity).setEnded(true);
-
-            }
-
-            // If EndOnReceivingResponse is set to true, end the Activity
-            if (this.activity.getEndOnReceivingResponse()) {
-                try {
-                    endActivity(this.activity);
-                } finally {
-                    ((HttpClientActivityImpl) this.activity).setEnded(true);
+            } finally {
+                if (hostKey != null) {
+                    adaptiveHostLimiter.release(hostKey);
                 }
             }
-            
-            //this piece needs to be after previous section to cover the 
-            // EndOnReceivingResponse=true scenario, and response is properly closed
-            if (this.activity.isEnded()) {
-                // received response event for which activity is already ended.
-                // Just add this in logs
+            deliverResponseEvent(event, response);
+        }
+
+        private void deliverResponseEvent(ResponseEvent event, HttpResponse response) {
+            try {
+                processResponseEvent(event, activity);
+            } catch (ActivityIsEndingException e) {
+                activity.endActivity();
+                ((HttpClientActivityImpl) activity).setEnded(true);
+            }
+
+            if (activity.getEndOnReceivingResponse()) {
+                try {
+                    endActivity(activity);
+                } finally {
+                    ((HttpClientActivityImpl) activity).setEnded(true);
+                }
+            }
+
+            if (activity.isEnded()) {
                 tracer.warning(String.format(
                         "Wanted to fire ResponseEvent for HttpClientActivity %s but activity is already ended, "
-                                + "droping event", this.activity.getSessionId()));
-                
-                //some cleaning so no leaks
-                if (response != null) {
+                                + "droping event", activity.getSessionId()));
+                HttpResponse resp = response;
+                if (resp == null && event != null) {
+                    resp = event.getHttpResponse();
+                }
+                if (resp != null) {
                     try {
-                        InputStream responsedStream = response.getEntity().getContent();
+                        InputStream responsedStream = resp.getEntity().getContent();
                         responsedStream.close();
-                        EntityUtils.consumeQuietly(response.getEntity());
+                        EntityUtils.consumeQuietly(resp.getEntity());
                     } catch (IOException e) {
                         tracer.severe("Exception while housekeeping. Event unreferenced", e);
                     }
                 }
-                
-                return;
-            }            
+            }
         }
 
     }
