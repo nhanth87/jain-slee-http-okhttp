@@ -15,6 +15,12 @@
 			<resource-adaptor-type-version>1.0</resource-adaptor-type-version>
        	</resource-adaptor-type-ref>
 
+        <library-ref>
+            <library-name>http</library-name>
+            <library-vendor>org.restcomm</library-vendor>
+            <library-version>1.2</library-version>
+        </library-ref>
+
 		<resource-adaptor-classes>
 	   		<resource-adaptor-class supports-active-reconfiguration="True">
                 <resource-adaptor-class-name>

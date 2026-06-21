@@ -12,7 +12,12 @@
 	<artifactId>http-servlet-library</artifactId>
 	<name>Restcomm :: Resources :: Library :: ${project.artifactId}</name>
 
-	<dependencies>		
+	<dependencies>
+		<dependency>
+			<groupId>${project.groupId}</groupId>
+			<artifactId>http-servlet-common</artifactId>
+			<version>${project.version}</version>
+		</dependency>
 	</dependencies>
 
 	<build>
