@@ -38,7 +38,13 @@
 			<config-property-name>HTTP_REQUEST_TIMEOUT</config-property-name>
 			<config-property-type>java.lang.Integer</config-property-type>
 			<config-property-value>65000</config-property-value>
-		</config-property>        
+		</config-property>
+		<config-property>
+			<description>HYBRID session strategy (SESS-1): HEADER_FIRST (default, modern AS), COOKIE_FIRST (legacy RestComm AS), or LOCALID_ONLY (no header/cookie, use generated localId)</description>
+			<config-property-name>HTTP_SESSION_STRATEGY</config-property-name>
+			<config-property-type>java.lang.String</config-property-type>
+			<config-property-value>HEADER_FIRST</config-property-value>
+		</config-property>
     </resource-adaptor>
     
     <security-permissions>

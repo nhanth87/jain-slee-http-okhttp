@@ -42,9 +42,13 @@ import javax.slee.resource.ResourceAdaptor;
 import javax.slee.resource.ResourceAdaptorContext;
 import javax.slee.resource.SleeEndpoint;
 
+import net.java.slee.resource.http.HttpSessionActivity;
 import net.java.slee.resource.http.events.HttpServletRequestEvent;
 
 import org.restcomm.slee.resource.http.events.HttpServletRequestEventImpl;
+import org.restcomm.slee.resource.http.HttpSessionActivityRegistry;
+import org.restcomm.slee.resource.http.SessionKeyResolver;
+import org.restcomm.slee.resource.http.SessionStrategy;
 
 /**
  *
@@ -55,6 +59,8 @@ public class HttpServletResourceAdaptor implements ResourceAdaptor, HttpServletR
 
     private static final String NAME_CONFIG_PROPERTY = "name";
     private static final String HTTP_REQUEST_TIMEOUT = "HTTP_REQUEST_TIMEOUT";
+    /** HYBRID strategy (SESS-1). Default: header-first for modern AS. */
+    private static final String HTTP_SESSION_STRATEGY = "HTTP_SESSION_STRATEGY";
     
     private ResourceAdaptorContext resourceAdaptorContext;
     private SleeEndpoint sleeEndpoint;
@@ -85,7 +91,13 @@ public class HttpServletResourceAdaptor implements ResourceAdaptor, HttpServletR
     private String name;
 
     private Integer httpRequestTimeout;
-    
+
+    /**
+     * HYBRID strategy (SESS-1). Volatile because it can be updated at
+     * runtime via {@link javax.slee.resource.ResourceAdaptor#raConfigurationUpdate(ConfigProperties)}.
+     */
+    private volatile SessionStrategy sessionStrategy = SessionStrategy.HEADER_FIRST;
+
     /**
      *
      */
@@ -146,6 +158,21 @@ public class HttpServletResourceAdaptor implements ResourceAdaptor, HttpServletR
 
     private void configureUpdatableProperties(ConfigProperties configProperties) {
     	httpRequestTimeout = (Integer) configProperties.getProperty(HTTP_REQUEST_TIMEOUT).getValue();
+        // HYBRID strategy (SESS-1). Optional — defaults to HEADER_FIRST.
+        ConfigProperties.Property strategyProp = configProperties.getProperty(HTTP_SESSION_STRATEGY);
+        if (strategyProp != null && strategyProp.getValue() != null) {
+            this.sessionStrategy = SessionStrategy.parse((String) strategyProp.getValue());
+        } else if (tracer != null && tracer.isFineEnabled()) {
+            tracer.fine("HTTP_SESSION_STRATEGY not configured, using default " + this.sessionStrategy);
+        }
+    }
+
+    /**
+     * Returns the currently-active session resolution strategy. Visible
+     * for tests / diagnostics.
+     */
+    public SessionStrategy getSessionStrategy() {
+        return this.sessionStrategy;
     }
     
     /*
@@ -187,6 +214,7 @@ public class HttpServletResourceAdaptor implements ResourceAdaptor, HttpServletR
     public void raUnconfigure() {
         name = null;
         httpRequestTimeout = null;
+        sessionStrategy = SessionStrategy.HEADER_FIRST;
     }
 
     /*
@@ -204,6 +232,7 @@ public class HttpServletResourceAdaptor implements ResourceAdaptor, HttpServletR
         eventLookup = null;
         requestLock = null;
         httpRaSbbinterface = null;
+        sessionStrategy = SessionStrategy.HEADER_FIRST;
     }
 
     // config management methods
@@ -428,9 +457,33 @@ public class HttpServletResourceAdaptor implements ResourceAdaptor, HttpServletR
      */
     public void onRequest(HttpServletRequest request, HttpServletResponse response) {
         AbstractHttpServletActivity activity = null;
+        HttpSessionActivity existingSessionActivity = null;
+        String resolvedKey = null;
 
         final HttpServletRequestWrapper requestWrapper = new HttpServletRequestWrapper(request);
-        final HttpSessionWrapper sessionWrapper = (HttpSessionWrapper) requestWrapper.getSession(false);
+
+        // HYBRID strategy (SESS-1):
+        //   Resolve a session key from the request WITHOUT touching the
+        //   servlet container's session pool. The wrapper still exists
+        //   for HttpServletRequestEventImpl compatibility, but we read
+        //   only headers/cookies here.
+        final SessionStrategy currentStrategy = this.sessionStrategy;
+        if (currentStrategy != SessionStrategy.LOCALID_ONLY) {
+            resolvedKey = SessionKeyResolver.resolve(requestWrapper, currentStrategy);
+        }
+        if (tracer.isFineEnabled()) {
+            tracer.fine("onRequest: strategy=" + currentStrategy + " resolvedKey=" + resolvedKey);
+        }
+        if (resolvedKey != null) {
+            existingSessionActivity = HttpSessionActivityRegistry.getInstance().lookup(resolvedKey);
+        }
+
+        // For event-name resolution we still need to know whether the
+        // request is multi-turn. Build a "synthetic" HttpSession marker:
+        // the legacy code passed the wrapper directly. We pass null when
+        // there is no key (single-shot path) and rely on the registry to
+        // decide whether this is multi-turn.
+        final HttpSessionWrapper sessionWrapper = null;
         final HttpServletRequestEvent requestEvent = new HttpServletRequestEventImpl(requestWrapper, response, this);
         final FireableEventType eventType = eventIdCache.getEventType(eventLookup, requestEvent, sessionWrapper);
 
@@ -445,23 +498,29 @@ public class HttpServletResourceAdaptor implements ResourceAdaptor, HttpServletR
         }
 
         boolean createActivity = true;
-        if (sessionWrapper == null) {
-            // create request activity
-            activity = new HttpServletRequestActivityImpl();
+        if (existingSessionActivity != null) {
+            // Reuse existing multi-turn activity from the registry.
+            activity = (AbstractHttpServletActivity) existingSessionActivity;
+            createActivity = false;
+        } else if (resolvedKey != null) {
+            // Create new multi-turn activity with explicit key (HYBRID).
+            // No servlet session involved — the key is either a header
+            // value or a JSESSIONID cookie value, decided by the strategy.
+            activity = new HttpSessionActivityImpl(resolvedKey);
         } else {
-            activity = new HttpSessionActivityImpl(sessionWrapper);
-            if (sessionWrapper.getResourceEntryPoint() != null) {
-                createActivity = false;
-            }
+            // No session key at all — single-shot request activity.
+            activity = new HttpServletRequestActivityImpl();
         }
 
         if (createActivity) {
-            // we have a session but its not activity yet, add it
             try {
-                if (sessionWrapper != null) {
-                    sessionWrapper.setResourceEntryPoint(this.name);
-                }
                 sleeEndpoint.startActivity(activity, activity);
+                // After successful startActivity, register multi-turn
+                // activities under their key so subsequent requests with
+                // the same key correlate to the same activity.
+                if (resolvedKey != null && activity instanceof HttpSessionActivity) {
+                    HttpSessionActivityRegistry.getInstance().register(resolvedKey, (HttpSessionActivity) activity);
+                }
             } catch (ActivityAlreadyExistsException e) {
                 if (tracer.isFineEnabled()) {
                     tracer.fine("Failed to add activity " + activity, e);
@@ -474,7 +533,8 @@ public class HttpServletResourceAdaptor implements ResourceAdaptor, HttpServletR
         }
 
         if (tracer.isFineEnabled()) {
-            tracer.fine("Firing event " + requestEvent + " in activity " + activity);
+            tracer.fine("Firing event " + requestEvent + " in activity " + activity
+                    + " (strategy=" + currentStrategy + ", key=" + resolvedKey + ")");
         }
 
         final Object lock = requestLock.getLock(requestEvent);
@@ -483,8 +543,10 @@ public class HttpServletResourceAdaptor implements ResourceAdaptor, HttpServletR
                 sleeEndpoint.fireEvent(activity, eventType, requestEvent, null, null, EventFlags.REQUEST_EVENT_UNREFERENCED_CALLBACK);
                 // block thread until event has been processed
                 lock.wait(httpRequestTimeout);
-                // the event was unreferenced or 15s timeout, if the activity is the request then end it
-                if (sessionWrapper == null) {
+                // Single-shot path: end the activity after the event was
+                // processed. Multi-turn activities are ended explicitly
+                // by the SBB (e.g. via HttpSessionActivity.endActivity).
+                if (existingSessionActivity == null && resolvedKey == null) {
                     endActivity(activity);
                 }
             } catch (Throwable e) {
